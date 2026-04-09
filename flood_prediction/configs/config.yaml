@@ -1,0 +1,59 @@
+mode: "real"
+
+api_keys:
+  cds_api_key: "f1eef164-7aee-4ef1-9a21-048661ee5214"
+  open_meteo: null  # Optional, no key required for free tier usually
+  noaa_api_key: null # Optional, depending on limits
+  opentopography_key: "f1c55b670c172507287de71c7755c6b0"
+
+data:
+  zarr_path: "data/flood_dataset.zarr"
+  chunk_size:
+    time: 24
+    lat: 128
+    lon: 128
+  temporal_resolution: "1H"
+  spatial_resolution: 0.05 # degrees
+  window_in: 24
+  window_out: 6
+
+regions:
+  india_east_coast:
+    lat_min: 10.0
+    lat_max: 20.0
+    lon_min: 79.0
+    lon_max: 86.0
+  bangladesh_delta:
+    lat_min: 21.0
+    lat_max: 26.0
+    lon_min: 88.0
+    lon_max: 92.0
+  us_gulf_coast:
+    lat_min: 25.0
+    lat_max: 30.0
+    lon_min: -95.0
+    lon_max: -85.0
+
+time_range:
+  start: "2020-01-01"
+  end: "2020-12-31"
+
+model:
+  grid_dim: 256 # internal spatial dim 
+  channels_dynamic: 2 # precipitation, wind_speed
+  channels_static: 5  # elevation, slope, HAND, flow_accumulation, distance_to_river
+  channels_graph: 4
+  embed_dim: 128
+  num_heads: 8
+  depth: 4
+  graph_nodes: 500 # max expected nodes in dynamic graph
+
+training:
+  batch_size: 4
+  epochs: 50
+  lr: 1e-4
+  loss_weights:
+    task: 1.0
+    mass: 0.1
+    elev: 0.1
+    smooth: 0.05

@@ -1,0 +1,12 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+data/
+*.zarr/
+*.grib
+*.tif
+*.csv
+.env
+.DS_Store
