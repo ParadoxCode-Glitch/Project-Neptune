@@ -7,11 +7,14 @@ import requests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def fetch_dem_srtm(region_config, api_key=None, output_dir="data/raw/dem"):
+def fetch_dem_srtm(region_config, output_dir="data/raw/dem", api_key=None):
     """
     Downloads SRTM / Copernicus DEM for the bounding box.
     Uses public OpenTopography API or similar as a robust source.
     """
+    if api_key is None:
+        api_key = os.environ.get('OPENTOPOGRAPHY_KEY', None)
+
     os.makedirs(output_dir, exist_ok=True)
     
     # Bounding box

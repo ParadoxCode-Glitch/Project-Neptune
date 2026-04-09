@@ -1,11 +1,10 @@
 mode: "real"
 
 api_keys:
-  cds_api_key: "f1eef164-7aee-4ef1-9a21-048661ee5214"
-  open_meteo: null  # Optional, no key required for free tier usually
-  noaa_api_key: null # Optional, depending on limits
-  opentopography_key: "f1c55b670c172507287de71c7755c6b0"
-
+  cds_api_key: null        # DO NOT HARDCODE. Read from ~/.cdsapirc or Kaggle Secrets
+  open_meteo: null         # Optional, no key required for free tier usually
+  noaa_api_key: null       # Optional, depending on limits
+  opentopography_key: null # DO NOT HARDCODE. Use .env or pass dynamically
 data:
   zarr_path: "data/flood_dataset.zarr"
   chunk_size:
