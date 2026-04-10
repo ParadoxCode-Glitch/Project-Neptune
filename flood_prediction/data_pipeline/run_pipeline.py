@@ -93,20 +93,20 @@ def _fetch_era5_chunk(year: str, month: str, region_config: dict, output_dir: st
         ],
     }
 
-    logger.info(f"[ERA5 {year}-{month}] Submitting micro-chunk CDS request...")
+    logger.info(f"[ERA5 {year}-{month}] Submitting request to CDS for monthly chunk...")
     try:
         client = cdsapi.Client()
         client.retrieve("reanalysis-era5-pressure-levels", request, out_file)
         
         if is_valid_grib(out_file):
-            logger.info(f"[ERA5 {year}-{month}] ✅ Validated Download: {out_file}")
+            logger.info(f"[ERA5 {year}-{month}] Download successfully validated: {out_file}")
             return out_file
         else:
-            logger.error(f"[ERA5 {year}-{month}] ❌ Download finished but corrupted structurally.")
+            logger.error(f"[ERA5 {year}-{month}] Download completed but file validation failed. Artifact corrupted.")
             os.remove(out_file)
             return None
     except Exception as e:
-        logger.error(f"[ERA5 {year}-{month}] ❌ Failed: {str(e)}")
+        logger.error(f"[ERA5 {year}-{month}] Download failed: {str(e)}")
         if os.path.exists(out_file):
             os.remove(out_file)
         return None
@@ -146,11 +146,11 @@ def build_pipeline(config_path: str) -> bool:
         # 1. Check for legacy monolithic fallback cache
         path_mono = os.path.join(era5_dir, f"era5_pressure_levels_india_{year}.grib")
         if os.path.exists(path_mono) and os.path.getsize(path_mono) > 0:
-            logger.info(f"[ERA5 {year}] Huge monolithic file found in cache. Swallowing full year at once...")
+            logger.info(f"[ERA5 {year}] Existing yearly dataset located in cache. Bypassing monthly chunking loop.")
             era5_paths.append(path_mono)
             continue
             
-        # 2. Iterate standard hyper-fast micro-chunks if monolithic is absent
+        # 2. Iterate standard monthly chunks if monolithic fallback is absent
         for month in months:
             path = _fetch_era5_chunk(str(year), str(month), region_config, era5_dir)
             if path:
@@ -236,7 +236,7 @@ def build_pipeline(config_path: str) -> bool:
     zarr_out = os.path.join(base_dir, config["data"]["zarr_path"])
     write_to_zarr(dataset_dict, zarr_out, config["data"]["chunk_size"])
 
-    logger.info("✅ Pipeline complete — real-world data ready for training.")
+    logger.info("Pipeline complete — real-world data securely configured and ready for training.")
     return True
 
 

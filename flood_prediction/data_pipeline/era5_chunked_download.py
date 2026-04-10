@@ -1,13 +1,13 @@
 """
 ERA5 Pressure-Level Chunked Downloader — Project Neptune
 =========================================================
-Fetches ERA5 data chunk-by-chunk (monthly) to stay within
-the CDS per-request cost limit and bypass timeout queues.
+Fetches ERA5 data in monthly chunks to stay within
+the CDS per-request cost limit and avoid queue timeouts.
 
 Each month is saved as a separate .grib file:
     data/raw/era5_pressure_levels/era5_pressure_levels_india_<YEAR>_<MONTH>.grib
 
-Already-downloaded and valid months are automatically skipped (safe to re-run).
+Already-downloaded and validated months are automatically skipped.
 
 Run:
     cd "c:\\Users\\Parad\\OneDrive\\Documents\\Project Neptune"
@@ -93,13 +93,13 @@ def download_chunk(client: cdsapi.Client, year: str, month: str) -> bool:
         return False
 
     if is_valid_grib(out_file):
-        logger.info(f"[{year}-{month}] ⏭  Valid cache found — skipping ({out_file})")
+        logger.info(f"[{year}-{month}] Valid cache found. Skipping {out_file}.")
         return True
 
     if os.path.exists(out_file):
         os.remove(out_file)
 
-    logger.info(f"[{year}-{month}] 📤 Submitting micro-chunk request to CDS...")
+    logger.info(f"[{year}-{month}] Submitting request to CDS for monthly chunk...")
     request = {**BASE_REQUEST, "year": [year], "month": [month]}
 
     try:
@@ -108,15 +108,15 @@ def download_chunk(client: cdsapi.Client, year: str, month: str) -> bool:
         
         if is_valid_grib(out_file):
             size_mb = os.path.getsize(out_file) / (1024 ** 2)
-            logger.info(f"[{year}-{month}] ✅ Done — {size_mb:.1f} MB saved to {out_file}")
+            logger.info(f"[{year}-{month}] Download completed. {size_mb:.1f} MB saved to {out_file}.")
             return True
         else:
-            logger.error(f"[{year}-{month}] ❌ Download finished but file is corrupted.")
+            logger.error(f"[{year}-{month}] Download completed but file validation failed. Corrupted artifact removed.")
             os.remove(out_file)
             return False
 
     except Exception as e:
-        logger.error(f"[{year}-{month}] ❌ Failed: {e}")
+        logger.error(f"[{year}-{month}] Download failed: {e}")
         # Remove partial file if it exists
         if os.path.exists(out_file):
             os.remove(out_file)
@@ -147,7 +147,7 @@ def main():
         for month in months:
             logger.info(f"── Chunk {chunk_idx}/{total_chunks} : {year}-{month} ──")
             ok = download_chunk(client, year, month)
-            results[f"{year}-{month}"] = "✅ OK" if ok else "❌ FAILED"
+            results[f"{year}-{month}"] = "OK" if ok else "FAILED"
             chunk_idx += 1
 
             # Small pause between requests to be polite to the CDS queue
