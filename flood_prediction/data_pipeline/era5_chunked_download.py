@@ -1,13 +1,13 @@
 """
 ERA5 Pressure-Level Chunked Downloader — Project Neptune
 =========================================================
-Fetches ERA5 data year-by-year (2020–2026) to stay within
-the CDS per-request cost limit.
+Fetches ERA5 data chunk-by-chunk (monthly) to stay within
+the CDS per-request cost limit and bypass timeout queues.
 
-Each year is saved as a separate .grib file:
-    data/raw/era5_pressure_levels/era5_pressure_levels_india_<YEAR>.grib
+Each month is saved as a separate .grib file:
+    data/raw/era5_pressure_levels/era5_pressure_levels_india_<YEAR>_<MONTH>.grib
 
-Already-downloaded years are automatically skipped (safe to re-run).
+Already-downloaded and valid months are automatically skipped (safe to re-run).
 
 Run:
     cd "c:\\Users\\Parad\\OneDrive\\Documents\\Project Neptune"
@@ -18,6 +18,7 @@ import os
 import time
 import logging
 import cdsapi
+import xarray as xr
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -53,10 +54,6 @@ BASE_REQUEST = {
         "u_component_of_wind",
         "v_component_of_wind",
     ],
-    "month": [
-        "01", "02", "03", "04", "05", "06",
-        "07", "08", "09", "10", "11", "12",
-    ],
     "day": DAYS,
     "time": [
         "02:00", "05:00", "08:00",
@@ -77,29 +74,49 @@ BASE_REQUEST = {
 
 # ── Download logic ────────────────────────────────────────────────────────────
 
-def download_year(client: cdsapi.Client, year: str) -> bool:
+def download_chunk(client: cdsapi.Client, year: str, month: str) -> bool:
     """
-    Submit a single-year ERA5 request and download the result.
+    Submit a single-month ERA5 request and validate using xarray.
     Returns True on success, False on failure.
     """
-    out_file = os.path.join(OUTPUT_DIR, f"era5_pressure_levels_india_{year}.grib")
+    out_file = os.path.join(OUTPUT_DIR, f"era5_pressure_levels_india_{year}_{month}.grib")
 
-    if os.path.exists(out_file) and os.path.getsize(out_file) > 0:
-        logger.info(f"[{year}] ⏭  Already downloaded — skipping ({out_file})")
+    def is_valid_grib(path: str) -> bool:
+        if not os.path.exists(path) or os.path.getsize(path) == 0:
+            return False
+        try:
+            with xr.open_dataset(path, engine="cfgrib") as ds:
+                if len(ds.data_vars) > 0:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    if is_valid_grib(out_file):
+        logger.info(f"[{year}-{month}] ⏭  Valid cache found — skipping ({out_file})")
         return True
 
-    logger.info(f"[{year}] 📤 Submitting request to CDS...")
-    request = {**BASE_REQUEST, "year": [year]}
+    if os.path.exists(out_file):
+        os.remove(out_file)
+
+    logger.info(f"[{year}-{month}] 📤 Submitting micro-chunk request to CDS...")
+    request = {**BASE_REQUEST, "year": [year], "month": [month]}
 
     try:
         result = client.retrieve(DATASET, request)
         result.download(out_file)
-        size_mb = os.path.getsize(out_file) / (1024 ** 2)
-        logger.info(f"[{year}] ✅ Done — {size_mb:.1f} MB saved to {out_file}")
-        return True
+        
+        if is_valid_grib(out_file):
+            size_mb = os.path.getsize(out_file) / (1024 ** 2)
+            logger.info(f"[{year}-{month}] ✅ Done — {size_mb:.1f} MB saved to {out_file}")
+            return True
+        else:
+            logger.error(f"[{year}-{month}] ❌ Download finished but file is corrupted.")
+            os.remove(out_file)
+            return False
 
     except Exception as e:
-        logger.error(f"[{year}] ❌ Failed: {e}")
+        logger.error(f"[{year}-{month}] ❌ Failed: {e}")
         # Remove partial file if it exists
         if os.path.exists(out_file):
             os.remove(out_file)
@@ -121,15 +138,22 @@ def main():
     client = cdsapi.Client()  # reads ~/.cdsapirc
 
     results = {}
-    for i, year in enumerate(YEARS, 1):
-        logger.info(f"── Chunk {i}/{len(YEARS)} : Year {year} ──")
-        ok = download_year(client, year)
-        results[year] = "✅ OK" if ok else "❌ FAILED"
+    months = [f"{m:02d}" for m in range(1, 13)]
+    
+    total_chunks = len(YEARS) * len(months)
+    chunk_idx = 1
+    
+    for year in YEARS:
+        for month in months:
+            logger.info(f"── Chunk {chunk_idx}/{total_chunks} : {year}-{month} ──")
+            ok = download_chunk(client, year, month)
+            results[f"{year}-{month}"] = "✅ OK" if ok else "❌ FAILED"
+            chunk_idx += 1
 
-        # Small pause between requests to be polite to the CDS queue
-        if i < len(YEARS):
-            logger.info("Waiting 5s before next request...\n")
-            time.sleep(5)
+            # Small pause between requests to be polite to the CDS queue
+            if chunk_idx <= total_chunks:
+                logger.info("Waiting 3s before next request...\n")
+                time.sleep(3)
 
     # Summary
     logger.info("\n" + "=" * 60)

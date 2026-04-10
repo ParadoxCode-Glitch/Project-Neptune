@@ -16,6 +16,7 @@ API keys used:
 
 import os
 import logging
+from dotenv import load_dotenv
 
 import yaml
 import numpy as np
@@ -31,11 +32,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ── ERA5 chunked download (inline — no separate ingestion module) ─────────────
-def _fetch_era5_chunk(year: str, region_config: dict, output_dir: str) -> str | None:
+def _fetch_era5_chunk(year: str, month: str, region_config: dict, output_dir: str) -> str | None:
     """
-    Download one year of ERA5 pressure-level data via cdsapi.
+    Download one month of ERA5 pressure-level data via cdsapi.
     Credentials are read automatically from ~/.cdsapirc.
-    Returns the output file path, or None on failure.
+    Validates output payload structurally with xarray.
+    Returns the output file path, or None on failure/corruption.
     """
     try:
         import cdsapi
@@ -44,11 +46,28 @@ def _fetch_era5_chunk(year: str, region_config: dict, output_dir: str) -> str | 
         return None
 
     os.makedirs(output_dir, exist_ok=True)
-    out_file = os.path.join(output_dir, f"era5_pressure_levels_india_{year}.grib")
+    out_file = os.path.join(output_dir, f"era5_pressure_levels_india_{year}_{month}.grib")
 
-    if os.path.exists(out_file) and os.path.getsize(out_file) > 0:
-        logger.info(f"[ERA5 {year}] Already exists — skipping.")
+    def is_valid_grib(path: str) -> bool:
+        if not os.path.exists(path) or os.path.getsize(path) == 0:
+            return False
+        try:
+            # Structurally validate that the file is not a corrupted text error artifact
+            with xr.open_dataset(path, engine="cfgrib") as ds:
+                if len(ds.data_vars) > 0:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    if is_valid_grib(out_file):
+        logger.info(f"[ERA5 {year}-{month}] Valid cache found. Skipping download.")
         return out_file
+
+    # If it exists but is corrupted, delete it
+    if os.path.exists(out_file):
+        logger.warning(f"[ERA5 {year}-{month}] Corrupted artifact found. Purging and re-downloading.")
+        os.remove(out_file)
 
     request = {
         "product_type": ["reanalysis"],
@@ -61,7 +80,7 @@ def _fetch_era5_chunk(year: str, region_config: dict, output_dir: str) -> str | 
             "v_component_of_wind",
         ],
         "year":  [year],
-        "month": ["01","02","03","04","05","06","07","08","09","10","11","12"],
+        "month": [month],
         "day":   ["01","03","04","06","08","09","11","12","14",
                   "16","17","19","20","22","24","25","27","28","30","31"],
         "time":  ["02:00","05:00","08:00","11:00","14:00","17:00","20:00","23:00"],
@@ -74,15 +93,29 @@ def _fetch_era5_chunk(year: str, region_config: dict, output_dir: str) -> str | 
         ],
     }
 
-    logger.info(f"[ERA5 {year}] Submitting CDS request...")
-    client = cdsapi.Client()   # reads ~/.cdsapirc — key: f1eef164-7aee-4ef1-9a21-048661ee5214
-    client.retrieve("reanalysis-era5-pressure-levels", request, out_file)
-    logger.info(f"[ERA5 {year}] ✅ Downloaded: {out_file}")
-    return out_file
+    logger.info(f"[ERA5 {year}-{month}] Submitting micro-chunk CDS request...")
+    try:
+        client = cdsapi.Client()
+        client.retrieve("reanalysis-era5-pressure-levels", request, out_file)
+        
+        if is_valid_grib(out_file):
+            logger.info(f"[ERA5 {year}-{month}] ✅ Validated Download: {out_file}")
+            return out_file
+        else:
+            logger.error(f"[ERA5 {year}-{month}] ❌ Download finished but corrupted structurally.")
+            os.remove(out_file)
+            return None
+    except Exception as e:
+        logger.error(f"[ERA5 {year}-{month}] ❌ Failed: {str(e)}")
+        if os.path.exists(out_file):
+            os.remove(out_file)
+        return None
 
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
 def build_pipeline(config_path: str) -> bool:
+    load_dotenv()
+    
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
 
@@ -103,16 +136,27 @@ def build_pipeline(config_path: str) -> bool:
     era5_dir = "data/raw/era5_pressure_levels"
     era5_paths = []
 
-    # ── 1. ERA5 download (one file per year) ───────────────────────────────
+    # ── 1. ERA5 download (monthly chunks) ───────────────────────────────
     start_year = int(time_range["start"][:4])
     end_year   = int(time_range["end"][:4])
 
+    months = [f"{m:02d}" for m in range(1, 13)]
+
     for year in range(start_year, end_year + 1):
-        path = _fetch_era5_chunk(str(year), region_config, era5_dir)
-        if path:
-            era5_paths.append(path)
-        else:
-            logger.warning(f"ERA5 {year} unavailable — continuing without it.")
+        # 1. Check for legacy monolithic fallback cache
+        path_mono = os.path.join(era5_dir, f"era5_pressure_levels_india_{year}.grib")
+        if os.path.exists(path_mono) and os.path.getsize(path_mono) > 0:
+            logger.info(f"[ERA5 {year}] Huge monolithic file found in cache. Swallowing full year at once...")
+            era5_paths.append(path_mono)
+            continue
+            
+        # 2. Iterate standard hyper-fast micro-chunks if monolithic is absent
+        for month in months:
+            path = _fetch_era5_chunk(str(year), str(month), region_config, era5_dir)
+            if path:
+                era5_paths.append(path)
+            else:
+                logger.warning(f"ERA5 {year}-{month} unavailable — continuing without it.")
 
     # ── 2. DEM (SRTM — free) ──────────────────────────────────────────────
     try:
